@@ -9,5 +9,6 @@ Settings in the Arduino IDE for code compilation and uppload:
 
 Uses libraries:
 * Adafruit_BME280 library
+* hp_BH1750 - https://github.com/Starmbi/hp_BH1750
 * PubSubClient https://github.com/knolleary/pubsubclient
 * ESP8266 core: http://arduino.esp8266.com/stable/package_esp8266com_index.json

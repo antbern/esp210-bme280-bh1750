@@ -1,7 +1,7 @@
 
 #include <Wire.h>
-#include <SPI.h>
 #include <Adafruit_BME280.h>
+#include <hp_BH1750.h>
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
@@ -15,6 +15,7 @@ PubSubClient client(esp_client);
 
 // Sensor objects
 Adafruit_BME280 bme;
+hp_BH1750 bh1750; 
 
 
 // used to send messages after interval
@@ -74,6 +75,20 @@ void setup() {
       delay(100);
     }    
   }
+
+  if(!bh1750.begin(BH1750_TO_GROUND)) {
+    Serial.println(F("Could not find a valid BH1750 sensor, check wiring!"));
+    
+    // blink rapidly and hang
+    while(1){
+      digitalWrite(led, HIGH);
+      delay(100);
+      digitalWrite(led, LOW);
+      delay(100);
+    }
+  }
+
+  bh1750.calibrateTiming();
   
   digitalWrite(led, LOW);
 
@@ -138,19 +153,24 @@ void loop() {
   if(now - lastMsg > interval) {
     lastMsg = now;
 
-    // read data      
+    // read data: BH1750 first since it takes some time (~500ms)
+    bh1750.start();
+    float lux = bh1750.getLux();
     float temp = bme.readTemperature();
     float pressure = bme.readPressure();
     float humidity = bme.readHumidity();
 
     // format it to JSON
-    snprintf(msg, MSG_BUFFER_SIZE, "{\"temperature\":%.2f,\"pressure\":%.2f,\"humidity\":%.2f}", temp, pressure, humidity);
+    snprintf(msg, MSG_BUFFER_SIZE, "{\"temperature\":%.2f,\"pressure\":%.2f,\"humidity\":%.2f,\"illuminance\":%.2f}", temp, pressure, humidity, lux);
     
     Serial.print("Publish message: ");
     Serial.println(msg);
 
     // publish message
     client.publish(topic_environment, msg);  
+
+    // run auto adjustment of measurement parameters
+    bh1750.adjustSettings(80);
   }
 
 }
