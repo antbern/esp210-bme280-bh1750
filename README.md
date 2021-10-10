@@ -9,3 +9,5 @@ Settings in the Arduino IDE for code compilation and uppload:
 
 Uses libraries:
 * Adafruit_BME280 library
+* PubSubClient https://github.com/knolleary/pubsubclient
+* ESP8266 core: http://arduino.esp8266.com/stable/package_esp8266com_index.json

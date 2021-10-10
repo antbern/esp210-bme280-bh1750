@@ -19,25 +19,34 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_BME280.h>
-#include <Adafruit_BME280.h>
 
 #include <ESP8266WiFi.h>
-#include "Adafruit_MQTT.h"
-#include "Adafruit_MQTT_Client.h"
-Adafruit_BME280 bme;
+#include <PubSubClient.h>
 
-WiFiClient client;
-
-// settings
+// Wifi and MQTT configuration
 #include "wifi_config.h"
 
+// Wifi and MQTT objects
+WiFiClient esp_client;
+PubSubClient client(esp_client);
 
-// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
-Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+// Sensor objects
+Adafruit_BME280 bme;
 
-Adafruit_MQTT_Publish topic_temperature = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/temperature");
-Adafruit_MQTT_Publish topic_pressure = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/pressure");
-Adafruit_MQTT_Publish topic_humidity = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/humidity");
+
+// used to send messages after interval
+unsigned long lastMsg = 0;
+
+// the default interval between measurements
+unsigned long interval = 5000;
+
+
+// the buffer used to format the JSON output to send
+#define MSG_BUFFER_SIZE  (256)
+char msg[MSG_BUFFER_SIZE];
+
+const char* topic_environment = "esp210/environment";
+const char* topic_interval = "esp210/interval";
 
 const int led = 5;
 
@@ -49,12 +58,12 @@ void setup() {
   pinMode(led, OUTPUT);
   digitalWrite(led, HIGH);
 
-  WiFi.mode(WIFI_STA);
+
   // Connect to WiFi
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   
   while (WiFi.status() != WL_CONNECTED) {
-    
     digitalWrite(led, HIGH);
     delay(250);
     digitalWrite(led, LOW);
@@ -84,63 +93,81 @@ void setup() {
   }
   
   digitalWrite(led, LOW);
+
+  // setup MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+  
+}
+
+void reconnect_mqtt() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+
+    // Attempt to connect
+    if (client.connect(mqtt_device_name)) {
+      Serial.println("connected");
+
+      // do stuff when connected here (like subscribing to topics)
+      
+      client.subscribe(topic_interval);
+      
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+
+  // try to interpret the message as an unsigned long
+  char *end;
+  unsigned long i = strtoul((const char*)payload, &end, 10);
+
+  if (end != (char*)payload && i >= 500) {
+    // we managed to parse an unsigned long, use it as interval for now
+    Serial.print("New interval received: ");
+    Serial.println(i, DEC);
+    
+    interval = i;
+  }
 }
 
 void loop() {
+  if(!client.connected()) {
+    reconnect_mqtt();
+  }
+  client.loop();
 
-  MQTT_connect();
-  
-    // connect to thingspeak and post data
-    if (WiFi.status() == WL_CONNECTED) {
+  unsigned long now = millis();
+  if(now - lastMsg > interval) {
+    lastMsg = now;
 
-        // read data      
-      float temp = bme.readTemperature();
-      float pressure = bme.readPressure();
-      float humidity = bme.readHumidity();
+    // read data      
+    float temp = bme.readTemperature();
+    float pressure = bme.readPressure();
+    float humidity = bme.readHumidity();
 
-      topic_temperature.publish(temp);
-      topic_pressure.publish(pressure);
-      topic_humidity.publish(humidity);
-
-      Serial.println("Published!");
-      
-    }
-   // TODO: add deep sleep
-   delay(5000);
-
-
-     // ping the server to keep the mqtt connection alive
-    // NOT required if you are publishing once every KEEPALIVE seconds
-  
-    if(! mqtt.ping()) {
-      mqtt.disconnect();
-    }
+    // format it to JSON
+    snprintf(msg, MSG_BUFFER_SIZE, "{\"temperature\":%.2f,\"pressure\":%.2f,\"humidity\":%.2f}", temp, pressure, humidity);
     
-}
+    Serial.print("Publish message: ");
+    Serial.println(msg);
 
-// Function to connect and reconnect as necessary to the MQTT server.
-// Should be called in the loop function and it will take care if connecting.
-void MQTT_connect() {
-  int8_t ret;
-
-  // Stop if already connected.
-  if (mqtt.connected()) {
-    return;
+    // publish message
+    client.publish(topic_environment, msg);  
   }
 
-  Serial.print("Connecting to MQTT... ");
-
-  uint8_t retries = 3;
-  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
-       Serial.println(mqtt.connectErrorString(ret));
-       Serial.println("Retrying MQTT connection in 5 seconds...");
-       mqtt.disconnect();
-       delay(5000);  // wait 5 seconds
-       retries--;
-       if (retries == 0) {
-         // basically die and wait for WDT to reset me
-         while (1);
-       }
-  }
-  Serial.println("MQTT Connected!");
 }
